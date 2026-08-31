@@ -80,6 +80,10 @@ with `active: true`. HA picks the proxy with the best signal; nothing to configu
   time a YAML component is imported (config validation imports the module before
   the bluetooth integration patches anything), and a plain `BleakClient` crashes
   with `KeyError: 'path'` on proxy-sourced devices.
+- Bulk image data is chunked to the link's negotiated MTU (row-aligned, up to
+  4 rows per packet). The data characteristic is write-without-response only,
+  and a long burst of small packets can congest an ESPHome proxy's BLE queue —
+  dropped rows leave the printer waiting forever and nothing prints.
 - The printer's status (`0xA1`) response is shorter than documented on some
   firmware, and the print-complete (`0xAA`) notification is occasionally lost over
   a proxy hop after the job already printed. Both are tolerated.

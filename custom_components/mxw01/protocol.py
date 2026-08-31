@@ -176,8 +176,18 @@ async def print_buffer(client: BleakClient, buffer: bytes, intensity: int) -> di
         if ack is None or len(ack) < 1 or ack[0] != 0:
             raise Mxw01ProtocolError(f"printer rejected print request (A9): {ack.hex() if ack else 'timeout'}")
 
-        for i in range(0, len(buffer), PRINTER_WIDTH_BYTES):
-            await client.write_gatt_char(data_char, buffer[i : i + PRINTER_WIDTH_BYTES], response=False)
+        # AE03 is write-without-response only, so writes larger than the link's
+        # MTU payload (mtu-3) are silently truncated/dropped — fatal on ESPHome
+        # proxy links that negotiate a small MTU. Chunk to what the link allows;
+        # the data channel is a byte stream, so chunks need not be row-aligned.
+        payload = max(20, (getattr(client, "mtu_size", 23) or 23) - 3)
+        if payload >= 2 * PRINTER_WIDTH_BYTES:
+            chunk_size = min(payload // PRINTER_WIDTH_BYTES, 4) * PRINTER_WIDTH_BYTES
+        else:
+            chunk_size = min(payload, PRINTER_WIDTH_BYTES)
+        _LOGGER.info("MXW01: mtu=%s → %d-byte chunks", getattr(client, "mtu_size", None), chunk_size)
+        for i in range(0, len(buffer), chunk_size):
+            await client.write_gatt_char(data_char, buffer[i : i + chunk_size], response=False)
             await asyncio.sleep(PACING_DELAY_S)
 
         await client.write_gatt_char(control_char, _command(CMD_PRINT_DATA_FLUSH, bytes([0x00])), response=False)
