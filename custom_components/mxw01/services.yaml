@@ -40,6 +40,10 @@ print_text:
           min: 0
           max: 255
 
+get_status:
+  name: Get status
+  description: Query the printer (battery, state) and refresh the kitty entities. Returns the status when response data is requested.
+
 print_image:
   name: Print image
   description: Print an image file on the MXW01 cat printer.

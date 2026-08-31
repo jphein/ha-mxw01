@@ -102,11 +102,22 @@ class Mxw01ProtocolError(Exception):
     """Printer rejected the job or a required response never arrived."""
 
 
-async def print_buffer(client: BleakClient, buffer: bytes, intensity: int) -> dict:
-    """Drive one print job over an already-connected BleakClient.
+def parse_status(payload: bytes) -> dict:
+    """Parse an A1 status payload. Handles the documented 13+-byte form and the
+    short ~10-byte form some firmware sends (battery still sits at offset 9)."""
+    info: dict = {}
+    if len(payload) >= 13:
+        if payload[12] != 0:
+            info["error"] = payload[13] if len(payload) >= 14 else 0
+        else:
+            info["state"] = payload[6]
+            info["battery"] = payload[9]
+    elif len(payload) >= 10 and payload[9] <= 100:
+        info["battery"] = payload[9]
+    return info
 
-    Returns a dict with status info (battery level when the printer reports it).
-    """
+
+def _find_chars(client: BleakClient):
     service = None
     for s in client.services:
         if s.uuid.lower() in (MAIN_SERVICE_UUID, MAIN_SERVICE_UUID_ALT):
@@ -114,12 +125,64 @@ async def print_buffer(client: BleakClient, buffer: bytes, intensity: int) -> di
             break
     if service is None:
         raise Mxw01ProtocolError("MXW01 main service not found on device")
-
-    control_char = service.get_characteristic(CONTROL_WRITE_UUID)
-    notify_char = service.get_characteristic(NOTIFY_UUID)
-    data_char = service.get_characteristic(DATA_WRITE_UUID)
-    if not all([control_char, notify_char, data_char]):
+    chars = (
+        service.get_characteristic(CONTROL_WRITE_UUID),
+        service.get_characteristic(NOTIFY_UUID),
+        service.get_characteristic(DATA_WRITE_UUID),
+    )
+    if not all(chars):
         raise Mxw01ProtocolError("MXW01 characteristics missing")
+    return chars
+
+
+async def get_status(client: BleakClient) -> dict:
+    """Query A1 status on an already-connected client."""
+    control_char, notify_char, _ = _find_chars(client)
+    received: dict[int, bytes] = {}
+    condition = asyncio.Condition()
+    loop = asyncio.get_running_loop()
+
+    def on_notify(_sender, data: bytearray) -> None:
+        if len(data) < 6 or data[0] != 0x22 or data[1] != 0x21:
+            return
+        payload_len = int.from_bytes(data[4:6], "little")
+        if len(data) < 6 + payload_len:
+            return
+        payload = bytes(data[6 : 6 + payload_len])
+        cmd_id = data[2]
+
+        async def _store() -> None:
+            async with condition:
+                received[cmd_id] = payload
+                condition.notify_all()
+
+        loop.create_task(_store())
+
+    await client.start_notify(notify_char, on_notify)
+    try:
+        await client.write_gatt_char(control_char, _command(CMD_GET_STATUS, bytes([0x00])), response=False)
+        async with condition:
+            try:
+                await asyncio.wait_for(
+                    condition.wait_for(lambda: CMD_GET_STATUS in received),
+                    timeout=NOTIFICATION_TIMEOUT_S,
+                )
+            except asyncio.TimeoutError:
+                raise Mxw01ProtocolError("printer did not answer status request (A1)")
+            return parse_status(received[CMD_GET_STATUS])
+    finally:
+        try:
+            await client.stop_notify(notify_char)
+        except Exception:  # noqa: BLE001 - disconnecting anyway
+            pass
+
+
+async def print_buffer(client: BleakClient, buffer: bytes, intensity: int) -> dict:
+    """Drive one print job over an already-connected BleakClient.
+
+    Returns a dict with status info (battery level when the printer reports it).
+    """
+    control_char, notify_char, data_char = _find_chars(client)
 
     received: dict[int, bytes] = {}
     condition = asyncio.Condition()
@@ -162,12 +225,12 @@ async def print_buffer(client: BleakClient, buffer: bytes, intensity: int) -> di
         status = await wait_for(CMD_GET_STATUS, NOTIFICATION_TIMEOUT_S)
         if status is None:
             raise Mxw01ProtocolError("printer did not answer status request (A1)")
-        if len(status) >= 13:
-            if status[12] != 0:
-                err = status[13] if len(status) >= 14 else 0
-                raise Mxw01ProtocolError(f"printer reports error 0x{err:02X} (no paper / lid open / overheat?)")
-            result["battery"] = status[9]
-        # Short A1 payloads (~10 bytes) are common on this firmware; proceed.
+        info = parse_status(status)
+        if "error" in info:
+            raise Mxw01ProtocolError(
+                f"printer reports error 0x{info['error']:02X} (no paper / lid open / overheat?)"
+            )
+        result.update(info)
 
         line_count = len(buffer) // PRINTER_WIDTH_BYTES
         req = bytearray(line_count.to_bytes(2, "little")) + bytes([0x30, MODE_MONOCHROME])

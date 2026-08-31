@@ -8,12 +8,14 @@ import voluptuous as vol
 from bleak_retry_connector import establish_connection
 
 from homeassistant.components import bluetooth
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import config_validation as cv, discovery
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.util import dt as dt_util
 
-from .protocol import Mxw01ProtocolError, image_to_buffer, print_buffer
+from .protocol import Mxw01ProtocolError, get_status, image_to_buffer, print_buffer
 from .render import load_image, render_text
 
 _LOGGER = logging.getLogger(__name__)
@@ -22,6 +24,8 @@ DOMAIN = "mxw01"
 CONF_ADDRESS = "address"
 CONF_INTENSITY = "intensity"
 DEFAULT_INTENSITY = 0x5D
+SIGNAL_UPDATE = "mxw01_update"
+EVENT_PRINT_COMPLETED = "mxw01_print_completed"
 
 CONFIG_SCHEMA = vol.Schema(
     {
@@ -62,6 +66,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     address: str = conf[CONF_ADDRESS].upper()
     default_intensity: int = conf[CONF_INTENSITY]
     print_lock = asyncio.Lock()
+    hass.data[DOMAIN] = {"address": address, "battery": None, "last_print": None}
+
+    def _absorb_status(info: dict) -> None:
+        if info.get("battery") is not None:
+            hass.data[DOMAIN]["battery"] = info["battery"]
+        async_dispatcher_send(hass, SIGNAL_UPDATE)
 
     async def _print(img, intensity: int | None, feed_lines: int) -> None:
         if feed_lines:
@@ -95,6 +105,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             finally:
                 await client.disconnect()
         _LOGGER.info("MXW01 print done: %s", result)
+        hass.data[DOMAIN]["last_print"] = {
+            "when": dt_util.now().isoformat(),
+            "lines": result.get("lines"),
+        }
+        _absorb_status(result)
+        hass.bus.async_fire(EVENT_PRINT_COMPLETED, {"address": address, **result})
 
     async def handle_print_text(call: ServiceCall) -> None:
         img = await hass.async_add_executor_job(
@@ -113,6 +129,30 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             img = img.point(lambda p: 255 if p > 127 else 0).convert("1")
         await _print(img, call.data.get(CONF_INTENSITY), call.data["feed_lines"])
 
+    async def handle_get_status(call: ServiceCall) -> ServiceResponse:
+        ble_device = bluetooth.async_ble_device_from_address(hass, address, connectable=True)
+        if ble_device is None:
+            raise HomeAssistantError(
+                f"MXW01 {address} not seen by any Bluetooth adapter or proxy — is it powered on?"
+            )
+        from habluetooth.wrappers import HaBleakClientWrapper
+
+        async with print_lock:
+            client = await establish_connection(HaBleakClientWrapper, ble_device, f"MXW01 {address}")
+            try:
+                info = await get_status(client)
+            except Mxw01ProtocolError as err:
+                raise HomeAssistantError(f"MXW01 status failed: {err}") from err
+            finally:
+                await client.disconnect()
+        _absorb_status(info)
+        return info
+
     hass.services.async_register(DOMAIN, "print_text", handle_print_text, schema=PRINT_TEXT_SCHEMA)
     hass.services.async_register(DOMAIN, "print_image", handle_print_image, schema=PRINT_IMAGE_SCHEMA)
+    hass.services.async_register(
+        DOMAIN, "get_status", handle_get_status, supports_response=SupportsResponse.OPTIONAL
+    )
+    hass.async_create_task(discovery.async_load_platform(hass, "sensor", DOMAIN, {}, config))
+    hass.async_create_task(discovery.async_load_platform(hass, "binary_sensor", DOMAIN, {}, config))
     return True
