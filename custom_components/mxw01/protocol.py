@@ -28,6 +28,7 @@ CMD_GET_STATUS = 0xA1
 CMD_PRINT_INTENSITY = 0xA2
 CMD_PRINT = 0xA9
 CMD_PRINT_COMPLETE = 0xAA
+CMD_BATTERY_LEVEL = 0xAB
 CMD_PRINT_DATA_FLUSH = 0xAD
 
 MODE_MONOCHROME = 0x00
@@ -103,17 +104,15 @@ class Mxw01ProtocolError(Exception):
 
 
 def parse_status(payload: bytes) -> dict:
-    """Parse an A1 status payload. Handles the documented 13+-byte form and the
-    short ~10-byte form some firmware sends (battery still sits at offset 9)."""
+    """Parse an A1 status payload (documented 13+-byte form only — the short
+    ~10-byte form some firmware sends has no known battery field; battery
+    comes from the dedicated AB command instead, verified 2026-08-31)."""
     info: dict = {}
     if len(payload) >= 13:
         if payload[12] != 0:
             info["error"] = payload[13] if len(payload) >= 14 else 0
         else:
             info["state"] = payload[6]
-            info["battery"] = payload[9]
-    elif len(payload) >= 10 and payload[9] <= 100:
-        info["battery"] = payload[9]
     return info
 
 
@@ -158,18 +157,30 @@ async def get_status(client: BleakClient) -> dict:
 
         loop.create_task(_store())
 
-    await client.start_notify(notify_char, on_notify)
-    try:
-        await client.write_gatt_char(control_char, _command(CMD_GET_STATUS, bytes([0x00])), response=False)
+    async def ask(cmd_id: int) -> Optional[bytes]:
+        await client.write_gatt_char(control_char, _command(cmd_id, bytes([0x00])), response=False)
         async with condition:
             try:
                 await asyncio.wait_for(
-                    condition.wait_for(lambda: CMD_GET_STATUS in received),
+                    condition.wait_for(lambda: cmd_id in received),
                     timeout=NOTIFICATION_TIMEOUT_S,
                 )
             except asyncio.TimeoutError:
-                raise Mxw01ProtocolError("printer did not answer status request (A1)")
-            return parse_status(received[CMD_GET_STATUS])
+                return None
+            return received[cmd_id]
+
+    await client.start_notify(notify_char, on_notify)
+    try:
+        status = await ask(CMD_GET_STATUS)
+        if status is None:
+            raise Mxw01ProtocolError("printer did not answer status request (A1)")
+        info = parse_status(status)
+        # Battery lives in the dedicated AB command: single byte 0-100
+        # (verified 0x64=100 on this firmware; A1's short payload has none).
+        battery = await ask(CMD_BATTERY_LEVEL)
+        if battery and battery[0] <= 100:
+            info["battery"] = battery[0]
+        return info
     finally:
         try:
             await client.stop_notify(notify_char)
@@ -260,6 +271,11 @@ async def print_buffer(client: BleakClient, buffer: bytes, intensity: int) -> di
         if done is None:
             _LOGGER.warning("MXW01: no print-complete (AA) notification within %.0fs", timeout)
         result["lines"] = line_count
+        # Refresh battery while connected (dedicated AB command, single byte).
+        await client.write_gatt_char(control_char, _command(CMD_BATTERY_LEVEL, bytes([0x00])), response=False)
+        batt = await wait_for(CMD_BATTERY_LEVEL, 3.0)
+        if batt and batt[0] <= 100:
+            result["battery"] = batt[0]
         return result
     finally:
         try:
