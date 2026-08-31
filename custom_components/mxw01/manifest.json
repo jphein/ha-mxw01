@@ -1,0 +1,11 @@
+{
+  "domain": "mxw01",
+  "name": "MXW01 Cat Printer",
+  "version": "0.1.0",
+  "documentation": "https://github.com/jphein/ha-mxw01",
+  "issue_tracker": "https://github.com/jphein/ha-mxw01/issues",
+  "codeowners": ["@jphein"],
+  "dependencies": ["bluetooth"],
+  "requirements": [],
+  "iot_class": "local_polling"
+}

@@ -1,0 +1,74 @@
+print_text:
+  name: Print text
+  description: Print a text label on the MXW01 cat printer.
+  fields:
+    text:
+      name: Text
+      description: Label text. Multi-line supported.
+      required: true
+      example: "Pantry\nOpened 2026-08-31"
+      selector:
+        text:
+          multiline: true
+    font_size:
+      name: Font size
+      description: Font size in pixels (printable width is 384 px / 48 mm).
+      default: 56
+      selector:
+        number:
+          min: 8
+          max: 200
+    align:
+      name: Alignment
+      default: center
+      selector:
+        select:
+          options: ["left", "center", "right"]
+    feed_lines:
+      name: Feed lines
+      description: Extra blank lines after the label (8 lines ≈ 1 mm).
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 400
+    intensity:
+      name: Intensity
+      description: Darkness 0-255 (default 93).
+      selector:
+        number:
+          min: 0
+          max: 255
+
+print_image:
+  name: Print image
+  description: Print an image file on the MXW01 cat printer.
+  fields:
+    path:
+      name: Path
+      description: Image path on the HA host (must be an allowed path, e.g. /config/www/...).
+      required: true
+      example: /config/www/label.png
+      selector:
+        text:
+    dither:
+      name: Dither
+      description: Floyd-Steinberg dithering for photos; off = hard threshold (best for text/QR).
+      default: true
+      selector:
+        boolean:
+    feed_lines:
+      name: Feed lines
+      description: Extra blank lines after the image (8 lines ≈ 1 mm).
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 400
+    intensity:
+      name: Intensity
+      description: Darkness 0-255 (default 93).
+      selector:
+        number:
+          min: 0
+          max: 255
