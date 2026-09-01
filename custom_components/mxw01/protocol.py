@@ -80,20 +80,34 @@ def _command(command_id: int, payload: bytes) -> bytearray:
     return cmd
 
 
+# The head prints faint while cold and while the motor ramps (job start), and
+# again as the job winds down — so content never goes at the very edges:
+# blank leader, a warm-up burn bar to heat the head, a gap, content, then a
+# blank trailer to absorb the fade. All of it lands outside a label's cut line.
+LEADER_BLANK = 8
+WARMUP_BLACK = 4
+WARMUP_GAP = 12
+TRAILER_BLANK = 40
+
+
 def image_to_buffer(img) -> bytearray:
     """Pack a PIL image (any mode, width 384) into the printer's 1-bpp format.
 
     PIL mode "1" packs MSB-first with bit 1 = white; the printer wants
     LSB-first with bit 1 = black, hence invert + bit-reverse per byte.
+    Adds warm-up leader and fade trailer lines around the content.
     """
     if img.width != PRINTER_WIDTH_PIXELS:
         raise ValueError(f"image width must be {PRINTER_WIDTH_PIXELS}, got {img.width}")
     if img.mode != "1":
         img = img.convert("L").convert("1")  # Floyd-Steinberg dithering
     raw = img.tobytes()
-    buf = bytearray(len(raw))
-    for i, b in enumerate(raw):
-        buf[i] = _BIT_REVERSE[b ^ 0xFF]
+    buf = bytearray(LEADER_BLANK * PRINTER_WIDTH_BYTES)
+    buf.extend(b"\xff" * (WARMUP_BLACK * PRINTER_WIDTH_BYTES))
+    buf.extend(bytearray(WARMUP_GAP * PRINTER_WIDTH_BYTES))
+    for b in raw:
+        buf.append(_BIT_REVERSE[b ^ 0xFF])
+    buf.extend(bytearray(TRAILER_BLANK * PRINTER_WIDTH_BYTES))
     if len(buf) < MIN_DATA_BYTES:
         buf.extend(bytearray(MIN_DATA_BYTES - len(buf)))
     return buf
