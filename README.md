@@ -19,6 +19,33 @@ GB01/GB02/GT01 "catprinter" generation. Print width is 384 dots (48 mm) on 57 mm
 thermal paper. For sticky labels, use **57×30 mm self-adhesive continuous thermal
 rolls** — the printer has no gap sensor, so die-cut/gapped label stock won't register.
 
+## Multiple printers / the classic cat-printer family
+
+Two generations share the `ae30` service UUID but speak different protocols.
+This integration drives both:
+
+| `protocol` | printers | framing | notes |
+|---|---|---|---|
+| `mxw01` (default) | MXW01 "kitty" | `0x22 0x21`, bulk rows on `ae03` | battery sensor, print-complete ack |
+| `classic` | GB01 / GB02 / GT01 / RT034h … | `0x51 0x78`, everything on `ae01` | firmware via `get_status`; no battery report |
+
+```yaml
+mxw01:
+  address: "AA:BB:CC:DD:EE:FF"     # legacy single-printer form = printer `kitty`
+  intensity: 255
+  printers:                         # optional extras
+    rt034h:
+      name: "RT034h printer"
+      address: "11:22:33:44:55:66"
+      protocol: classic
+      intensity: 255
+```
+
+Every service accepts an optional `printer: <slug>`; omitted, it targets `kitty`
+(or the first configured printer). Unsure which protocol you have? Connect and
+send classic `GetDeviceInfo` (`51 78 a8 00 01 00 00 00 ff`) to `ae01`: a classic
+printer answers with its firmware string, an MXW01 stays silent.
+
 ## Install
 
 1. Copy `custom_components/mxw01/` into your Home Assistant `config/custom_components/`.

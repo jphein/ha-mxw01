@@ -2,6 +2,12 @@ print_text:
   name: Print text
   description: Print a text label on the MXW01 cat printer.
   fields:
+    printer:
+      name: Printer
+      description: Which configured printer (slug). Defaults to the kitty.
+      example: rt034h
+      selector:
+        text:
     text:
       name: Text
       description: Label text. Multi-line supported.
@@ -42,12 +48,26 @@ print_text:
 
 get_status:
   name: Get status
-  description: Query the printer (battery, state) and refresh the kitty entities. Returns the status when response data is requested.
+  description: Query a printer (battery/firmware/state) and refresh its entities. Returns the status when response data is requested.
+  fields:
+    printer:
+      name: Printer
+      description: Which configured printer (slug). Defaults to the kitty.
+      example: rt034h
+      selector:
+        text:
+
 
 print_image:
   name: Print image
   description: Print an image file on the MXW01 cat printer.
   fields:
+    printer:
+      name: Printer
+      description: Which configured printer (slug). Defaults to the kitty.
+      example: rt034h
+      selector:
+        text:
     path:
       name: Path
       description: Image path on the HA host (must be an allowed path, e.g. /config/www/...).
