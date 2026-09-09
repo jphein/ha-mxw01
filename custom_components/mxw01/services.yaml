@@ -96,3 +96,33 @@ print_image:
         number:
           min: 0
           max: 255
+
+render_preview:
+  name: Render preview
+  description: Render exactly what print_text would print, to /config/www/mxw01/preview-<printer>.png (2x scale). Returns url/lines/mm. Nothing is printed.
+  fields:
+    printer:
+      name: Printer
+      description: Which configured printer (slug). Defaults to the kitty.
+      example: rt034h
+      selector:
+        text:
+    text:
+      name: Text
+      required: true
+      selector:
+        text:
+          multiline: true
+    font_size:
+      name: Font size
+      default: 56
+      selector:
+        number:
+          min: 8
+          max: 200
+    align:
+      name: Alignment
+      default: center
+      selector:
+        select:
+          options: ["left", "center", "right"]

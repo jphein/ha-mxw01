@@ -98,6 +98,15 @@ PRINT_IMAGE_SCHEMA = vol.Schema(
 
 GET_STATUS_SCHEMA = vol.Schema({vol.Optional(CONF_PRINTER): cv.slug})
 
+RENDER_PREVIEW_SCHEMA = vol.Schema(
+    {
+        vol.Required("text"): cv.string,
+        vol.Optional("font_size", default=56): vol.All(vol.Coerce(int), vol.Range(min=8, max=200)),
+        vol.Optional("align", default="center"): vol.In(["left", "center", "right"]),
+        vol.Optional(CONF_PRINTER): cv.slug,
+    }
+)
+
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     conf = config[DOMAIN]
@@ -240,6 +249,39 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         _absorb(printer, info)
         return {"printer": printer["slug"], **info}
 
+    async def handle_render_preview(call: ServiceCall) -> ServiceResponse:
+        """Render what print_text WOULD print, to /config/www, for preview-before-print."""
+        printer = _pick(call)
+        img = await hass.async_add_executor_job(
+            render_text, call.data["text"], call.data["font_size"], 12, call.data["align"]
+        )
+
+        def _save() -> tuple[str, int]:
+            import os
+
+            out_dir = hass.config.path("www", "mxw01")
+            os.makedirs(out_dir, exist_ok=True)
+            path = os.path.join(out_dir, f"preview-{printer['slug']}.png")
+            # 384 px wide is tiny on a phone; scale 2x, keep it crisp (no resampling blur).
+            img.convert("L").resize((img.width * 2, img.height * 2), 0).save(path)
+            return path, img.height
+
+        path, lines = await hass.async_add_executor_job(_save)
+        return {
+            "printer": printer["slug"],
+            "path": path,
+            "url": f"/local/mxw01/preview-{printer['slug']}.png?v={int(dt_util.utcnow().timestamp())}",
+            "lines": lines,
+            "mm": round(lines / 8, 1),
+        }
+
+    hass.services.async_register(
+        DOMAIN,
+        "render_preview",
+        handle_render_preview,
+        schema=RENDER_PREVIEW_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
     hass.services.async_register(DOMAIN, "print_text", handle_print_text, schema=PRINT_TEXT_SCHEMA)
     hass.services.async_register(DOMAIN, "print_image", handle_print_image, schema=PRINT_IMAGE_SCHEMA)
     hass.services.async_register(
