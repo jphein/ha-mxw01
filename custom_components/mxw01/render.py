@@ -26,10 +26,43 @@ def _load_font(size: int):
     return ImageFont.load_default(size)
 
 
+MIN_FONT_SIZE = 14
+
+
+def _wrap(line: str, font, max_w: int, probe) -> list[str]:
+    """Greedy word-wrap for a line that is too wide even at the smallest font."""
+    words, out, cur = line.split(" "), [], ""
+    for w in words:
+        trial = (cur + " " + w).strip()
+        if probe.textlength(trial, font=font) <= max_w or not cur:
+            cur = trial
+        else:
+            out.append(cur)
+            cur = w
+    if cur:
+        out.append(cur)
+    return out or [""]
+
+
 def render_text(text: str, font_size: int = 56, padding: int = 12, align: str = "center") -> Image.Image:
-    font = _load_font(font_size)
+    """Render text to a 384-px-wide label. **Never clips**: the font shrinks to
+    fit the widest line (down to MIN_FONT_SIZE), and anything still too wide is
+    word-wrapped. Found by the preview card 2026-09-09 — "Luna's snacks" at 56 px
+    printed as "Luna's snack" and nobody could see that before paper.
+    """
     lines = text.split("\n")
     probe = ImageDraw.Draw(Image.new("L", (1, 1)))
+    max_w = PRINTER_WIDTH_PIXELS - padding * 2
+    size = font_size
+    while True:
+        font = _load_font(size)
+        widest = max((probe.textlength(line, font=font) for line in lines), default=0)
+        if widest <= max_w or size <= MIN_FONT_SIZE:
+            break
+        size -= 2
+    if size <= MIN_FONT_SIZE:
+        lines = [seg for line in lines for seg in _wrap(line, font, max_w, probe)]
+    font_size = size
     boxes = [probe.textbbox((0, 0), line, font=font) for line in lines]
     heights = [b[3] - b[1] for b in boxes]
     gap = max(4, font_size // 6)
