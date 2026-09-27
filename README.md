@@ -117,7 +117,7 @@ with `active: true`. HA picks the proxy with the best signal; nothing to configu
 
 ## Credits & license
 
-MIT — see [LICENSE](LICENSE). Protocol ported from
-[jeremy46231/MXW01-catprinter](https://github.com/jeremy46231/MXW01-catprinter) (MIT).
+AGPL-3.0-or-later © 2026 Jeffrey Pine Hein. See [LICENSE](LICENSE). Protocol ported from
+[jeremy46231/MXW01-catprinter](https://github.com/jeremy46231/MXW01-catprinter) (MIT; its notice applies to the ported protocol logic).
 Ships [DejaVu Sans Bold](https://dejavu-fonts.github.io/) for text rendering
 (free license based on Bitstream Vera).
